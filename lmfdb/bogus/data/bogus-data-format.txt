@@ -1,0 +1,8 @@
+colon separated lines of the form
+
+animal:rank
+
+where 
+
+animal - a string
+rank   - an integer
