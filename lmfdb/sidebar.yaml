@@ -173,6 +173,9 @@
       colspan: onecolumn
     - title: Function fields
       status: future
+    - title: Bogus
+      status: beta
+      url_for:  "bogus.index"
 
 6Repn:
    type: simple

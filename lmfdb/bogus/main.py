@@ -44,18 +44,6 @@ def search():
     bogus_string = "-".join([cartan_type, rank, weight])
     return redirect(url_for('.show', bogus=bogus_string))
 
-
-@bogus_page.route("/search_littelmann")
-def search_littelmann():
-    weight = request.args.get('weight', '')
-    weight = weight.replace(',', '.')
-    cartan_type = str(request.args.get('cartan_type', ''))
-    logger.info("weight = %s" % weight)
-    if not (cartan_type and weight):
-        return redirect(url_for('.index'))
-    bogus_string = "-".join([cartan_type, str(2), weight])
-    return redirect(url_for('.show_littelmann', bogus=bogus_string))
-
 @bogus_page.route("/")
 def index():
     bread = get_bread()
