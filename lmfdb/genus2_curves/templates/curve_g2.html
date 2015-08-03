@@ -20,22 +20,39 @@ function show_code(system) {
   }
 </script>
 
+<script>
+var cur_invstyle = null;
+function show_invs(invstyle) {
+    $('.igusa_clebsch').hide();
+    $('.igusa').hide();
+    $('.g2').hide();
+    $('.'+invstyle).show();
+  }
+</script>
+
 <script type="text/javascript"
         src="http://cdn.mathjax.org/mathjax/latest/MathJax.js"></script>
 <script type="text/javascript"
 src="http://code.jquery.com/jquery-latest.min.js"></script>
 <script src="http://aleph.sagemath.org/embedded_sagecell.js"></script>
 
-    {% set KNOWL_ID = "ec.q.%s"|format(data['label']) %}
+    {% set KNOWL_ID = "g2c.%s"|format(data['label']) %}
 
 <!--<h2>{{ KNOWL_INC(KNOWL_ID+'.top',title='') }}</h2>-->
 
+    <div align ="center">
+      Show commands using:  <a onclick="show_code('sage'); return false" href='#'>sage</a>,
+        <a onclick="show_code('magma'); return false" href='#'>magma</a>
+    </div>
+    
     <h2> {{ KNOWL('g2c.minimal_equation', title='Minimal equation') }} </h2>
-<p>  ${{ data.data.min_eqn }}$ </p>
+    <p> ${{ data.data.min_eqn_display }}$ </p>
+
+    <div class='sage nodisplay code'><img src ="http://www.sagemath.org/pix/sage_logo_new.png" width = "50px">&nbsp; R.&lt;x&gt; = PolynomialRing(QQ); C = HyperellipticCurve(R({{data.data.min_eqn[0]}}), R({{data.data.min_eqn[1]}}))</div>
+    <div class='magma nodisplay code'><img src = "http://i.stack.imgur.com/0468s.png" width="50px"> R&lt;x&gt; := PolynomialRing(Rationals()); C := HyperellipticCurve(R!{{data.data.min_eqn[0]}}, R!{{data.data.min_eqn[1]}});</div>
 
     <h2> {{ KNOWL('g2c.invariants', title='Invariants') }}  </h2>
         <table>
-
         <tr>
           <td> \( N \) </td>
 	  <td>&nbsp;=&nbsp;</td>
@@ -50,36 +67,114 @@ src="http://code.jquery.com/jquery-latest.min.js"></script>
           <td>&nbsp;=&nbsp;</td>
           <td>{{ data.data.disc_factor_latex }}</td>
         </tr>
-	
-        <tr>
+        </table>
+        <br>
+        <div class='igusa_clebsch'>
+            Igusa-Clebsch invariants:
+        </div>
+        <div class='igusa nodisplay'>
+            Igusa invariants:
+        </div>
+        <div class='g2 nodisplay'>
+            G2 invariants:
+        </div>
+        <table>
+        <tr class='igusa_clebsch'>
           <td> \( I_2 \) </td>
-	  <td>&nbsp;=&nbsp;</td>
-	  <td>\({{ data.data.invs[0] }}\)</td>
           <td>&nbsp;=&nbsp;</td>
-	  <td>{{ data.data.invs_factor_latex[0] }}</td>
+          <td>\({{ data.data.ic_norm[0] }}\)</td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>{{ data.data.ic_norm_factor_latex[0] }}</td>
         </tr>
-	<tr>
+        <tr class='igusa_clebsch'>
           <td> \( I_4 \) </td>
-	  <td>&nbsp;=&nbsp;</td>
-	  <td>\({{ data.data.invs[1] }}\)</td>
           <td>&nbsp;=&nbsp;</td>
-	  <td>{{ data.data.invs_factor_latex[1] }}</td>
+          <td>\({{ data.data.ic_norm[1] }}\)</td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>{{ data.data.ic_norm_factor_latex[1] }}</td>
         </tr>
-	<tr>
+        <tr class='igusa_clebsch'>
           <td> \( I_6 \) </td>
-	  <td>&nbsp;=&nbsp;</td>
-	  <td>\({{ data.data.invs[2] }}\)</td>
           <td>&nbsp;=&nbsp;</td>
-	  <td>{{ data.data.invs_factor_latex[2] }}</td>
+          <td>\({{ data.data.ic_norm[2] }}\)</td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>{{ data.data.ic_norm_factor_latex[2] }}</td>
         </tr>
-	<tr>
+        <tr class='igusa_clebsch'>
           <td> \( I_{10} \) </td>
-	  <td>&nbsp;=&nbsp;</td>
-	  <td>\({{ data.data.invs[3]}}\)</td>
           <td>&nbsp;=&nbsp;</td>
-	  <td>{{ data.data.invs_factor_latex[3] }}</td>
+          <td>\({{ data.data.ic_norm[3]}}\)</td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>{{ data.data.ic_norm_factor_latex[3] }}</td>
         </tr>
-	</table>
+        <tr class='igusa nodisplay'>
+          <td> \( J_2 \) </td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>\({{ data.data.igusa_norm[0] }}\)</td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>{{ data.data.igusa_norm_factor_latex[0] }}</td>
+        </tr>
+        <tr class='igusa nodisplay'>
+          <td> \( J_4 \) </td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>\({{ data.data.igusa_norm[1] }}\)</td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>{{ data.data.igusa_norm_factor_latex[1] }}</td>
+        </tr>
+        <tr class='igusa nodisplay'>
+          <td> \( J_6 \) </td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>\({{ data.data.igusa_norm[2] }}\)</td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>{{ data.data.igusa_norm_factor_latex[2] }}</td>
+        </tr>
+        <tr class='igusa nodisplay'>
+          <td> \( J_8 \) </td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>\({{ data.data.igusa_norm[3] }}\)</td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>{{ data.data.igusa_norm_factor_latex[3] }}</td>
+        </tr>
+        <tr class='igusa nodisplay'>
+          <td> \( J_{10} \) </td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>\({{ data.data.igusa_norm[4]}}\)</td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>{{ data.data.igusa_norm_factor_latex[4] }}</td>
+        </tr>
+        <tr class='g2 nodisplay'>
+          <td> \( g_1 \) </td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>\({{ data.data.g2[0] }}\)</td>
+        </tr>
+        <tr class='g2 nodisplay'>
+          <td> \( g_2 \) </td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>\({{ data.data.g2[1] }}\)</td>
+        </tr>
+        <tr class='g2 nodisplay'>
+          <td> \( g_3 \) </td>
+          <td>&nbsp;=&nbsp;</td>
+          <td>\({{ data.data.g2[2] }}\)</td>
+        </tr>
+        <table>
+        <br>
+        <div class='igusa_clebsch'>
+            Alternative geometric invariants: 
+            <a onclick="show_invs('igusa'); return false" href='#'>Igusa</a>,
+            <a onclick="show_invs('g2'); return false" href='#'>G2</a>
+        </div>
+        <div class='igusa nodisplay'>
+            Alternative geometric invariants: 
+            <a onclick="show_invs('igusa_clebsch'); return false" href='#'>Igusa-Clebsch</a>,
+            <a onclick="show_invs('g2'); return false" href='#'>G2</a>
+        </div>
+        <div class='g2 nodisplay'>
+            Alternative geometric invariants: 
+            <a onclick="show_invs('igusa_clebsch'); return false" href='#'>Igusa-Clebsch</a>,
+            <a onclick="show_invs('igusa'); return false" href='#'>Igusa</a>
+        </div>
+
 
     <h2> {{ KNOWL('g2c.aut_grp', title='Automorphism group') }} </h2>
 <table>
@@ -89,25 +184,37 @@ src="http://code.jquery.com/jquery-latest.min.js"></script>
 
 <h2> {{ KNOWL('g2c.num_rat_wpts', title='Number of rational Weierstrass points') }} </h2>
 \({{data.data.num_rat_wpts}}\)
+<h4>
+Properties related to the {{KNOWL('g2c.jacobian', title='Jacobian')}}
+</h4>
+<h2>
+{{ KNOWL('g2c.two_selmer_rank', title='2-Selmer rank') }} 
+</h2>
+\({{data.data.two_selmer_rank}}\)
+<h2>
+{{ KNOWL('g2c.torsion', title='Torsion') }}
+</h2>
+\({{data.data.tor_struct}}\) 
 
-<h2> {{ KNOWL('g2c.torsion', title='Torsion') }} </h2>
-\({{data.data.tor_struct}}\)
 
 <h2> {{KNOWL('g2c.st_group', title='Sato-Tate group') }} </h2>
 <p>
-\({{ data.data.st_group_name }}\)
+{% if data.data.real_geom_end_alg == 'R'%}
+\(\mathrm{ST} = {{ data.data.st_group_name }}\)
+{% else %}
+\(\mathrm{ST} = {{ data.data.st_group_name }}, \quad \mathrm{ST}^0 = {{ data.data.st0_group_name}}\)
+{% endif %}
 </p>
 
 <h2> {{ KNOWL('g2c.jac_endomorphisms', title='Endomorphisms of the Jacobian') }} </h2>
+{{data.data.endomorphism_statement}}
 <table>
-  <tr>  <td>\(\mathrm{End}(J) \)</td><td>\(\simeq\)</td><td>\({{data.data.end_ring_name}}\)</td></tr>
   <tr>  <td>\(\mathrm{End}(J) \otimes \Q\)</td><td>\(\simeq\)</td><td>\({{data.data.rat_end_alg_name}}\)</td>
-<td>[Is simple over \(\Q \): {{data.data.is_simple_name}}]</td></tr>
+</tr>
   <tr>  <td>\(\mathrm{End}(J) \otimes \R\)</td><td>\(\simeq\)</td><td>\({{data.data.real_end_alg_name}}\)</td>
-<td>[Is \(\mathrm{GL}_2-\)type: {{data.data.is_gl2_type_name}}]</td></tr>
-  <tr>  <td>\(\mathrm{End}(J_{\overline{\Q}})\)</td><td>\(\simeq\)</td><td>\({{data.data.geom_end_ring_name}}\)</td></tr>
+</tr>
   <tr>  <td>\(\mathrm{End}(J_{\overline{\Q}}) \otimes \Q\)</td><td>\(\simeq\)</td><td>\({{data.data.rat_geom_end_alg_name}}\)</td>
-<td>[Is simple over \(\overline{\Q} \): {{data.data.is_geom_simple_name}}]</td></tr>
+</tr>
   <tr>  <td>\(\mathrm{End}(J_{\overline{\Q}}) \otimes \R\)</td><td>\(\simeq\)</td><td>\({{data.data.real_geom_end_alg_name}}\)</td></tr>
 
 </table>
