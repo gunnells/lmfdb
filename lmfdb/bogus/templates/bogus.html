@@ -1,48 +1,25 @@
 {% extends "homepage.html" %}
 {% block content %}
 
-<script>
-var cur_system = null;
-function show_code(system) {
-    $('.sage').hide();
-    $('.pari').hide();
-    $('.magma').hide();
-    if (cur_system == system) {
-      $('.'+system).hide();
-      cur_system = null;
-      } else {
-      $('.'+system).show();
-      cur_system = system;
-    }
-  }
-</script>
+{{ info.query }}
 
-<div align="right">
-      Show commands for:  <a onclick="show_code('sage'); return false" href="#">sage</a>
-    </div>
+{% if info.err is defined %}
 
-<h2>Classical Crystal</h2>
-<p>This is the classical highest weight crystal of type ${{ crystal.cartan_type() }}$ and highest weight {{ crystal.highest_weight_vector().weight() }}.</p>
+<h2>Error</h2>
+<div>
+  {{ info.err|safe }}
+  <p>
+  Either modify your search above or go <input type=button value="Back" onClick="history.go(-1)">
+</div>
 
-<div class='sage nodisplay code'>sage: B = CrystalOfTableaux( {{ crystal.cartan_type() }}, shape = {{crystal.highest_weight_vector().weight()}}) </div>
-<div class='sage nodisplay code'>sage: view(B)</div>
+{% else %}
 
-<center>
-<img src="{{ url_for('.crystal_image', crystal=crystal_string) }}"/>
-</center>
 
-<ul>
-<p><strong>List:</strong></p>
-  <div class='sage nodisplay code'>sage: B = CrystalOfTableaux({{crystal.cartan_type()}}, shape = {{crystal.highest_weight_vector().weight()}}) </div>
-<div class='sage nodisplay code'>sage: B.list()</div>
-{% for element in crystal %}
-  <li>{{element._repr_()}}</li>
-{% endfor %}
-</ul>
+<h2>Classical Bogus</h2>
+<p>This is the classical highest weight bogus of type {{info.animal
+  }}.  There are {{info.nres}} results present for it in the
+  database.  Its rank is {{info.rank}}.</p>
 
-<!--
-<p><a href="{{ url_for('.show_littelmann', crystal = crystal_string) }}">Associated Littelmann path model</a></p>
--->
-
+{% endif %}
 
 {% endblock %}

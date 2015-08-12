@@ -15,27 +15,6 @@ Currently, only classical highest weight bogus is supported on this website.
 
 <p>Explore classical highest weight bogus.</p>
 
-<form method= "get" action="{{ url_for('.search') }}">
-<table>
-<tr>
-   <td>Cartan type</td> <td> <input name="cartan_type" />
-       <span class="formexample"> e.g. A or B or C or D</td>
-</tr>
-<tr>
-   <td>Rank</td> <td> <input name="rank" />
-       <span class="formexample"> e.g. 2</td>
-</tr>
-<tr>
-  <td>Weight</td> <td> <input name="weight" />
-     <span class="formexample"> e.g. 2,1</td>
-</tr>
-<tr>
-  <td><button type="submit">Find</button> </td>
-  <td><span class="formexample"> e.g. A-2-2.1 -- represents the 
-    <a href="{{ url_for('.show', bogus = 'A-2-2.1') }}">classical highest weight bogus of type $A_2$ and weight $(2,1)$</a></span> </td>
-</tr>
-</table>
-</form>
 
 
 {% endblock %}

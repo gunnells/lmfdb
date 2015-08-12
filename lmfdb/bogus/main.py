@@ -2,6 +2,13 @@
 # This Blueprint is about Bogus
 
 from flask import render_template, request, url_for, make_response, redirect
+import lmfdb.base
+from lmfdb.base import app
+from lmfdb.bogus import bogus_page, logger
+from lmfdb.utils import to_dict
+from pymongo import ASCENDING, DESCENDING
+import os
+import StringIO
 
 
 def get_bread(breads=[]):
@@ -11,25 +18,52 @@ def get_bread(breads=[]):
     return bc
 
 
-def make_tableaux_bogus(bogus):
-    from sage.all_cmdline import BogusOfTableaux
-    cartan, rank, weight = bogus.split("-")
-    weight = weight.split(".")
-    return BogusOfTableaux([str(cartan), int(rank)], shape=tuple(map(int, weight)))
+bogusdb = None
+
+def db_bogus():
+    global bogusdb
+    if bogusdb is None:
+        bogusdb = lmfdb.base.getDBConnection().bogus.animals
+    return bogusdb
+
+def bogus_search(**args):
+    info = to_dict(args)
+    bread = [('Bogus', url_for("bogus.index")),
+             ('Search Results', '.')]
+    query = {}
+
+    if info.get('animal'):
+        query = {'animal':info['animal']}
+        cursor = db_bogus().find(query)
+        nres = cursor.count()
+        info['nres'] = nres
+        for result in cursor:
+            info['rank'] = result['rank']
+            
+    t = 'Bogus search results'
+    credit = 'nobody@nowhere.com'
+    if nres == 0:
+        info['err'] = 'There was a search error.  No results were found.  Hopefully this helpful message helps.'
+        return search_input_error(info, bread, credit)
+    
+    return render_template("bogus.html", info=info, credit=credit, bread=bread, title=t)
 
 
-def make_path_bogus(bogus):
-    from sage.all_cmdline import BogusOfLSPaths
-    cartan, rank, weight = bogus.split("-")
-    weight = weight.split(".")
-    return BogusOfLSPaths([str(cartan), int(rank)], map(int, weight))
+def search_input_error(info, bread, credit):
+    return render_template("bogus.html", info=info, credit=credit, bread=bread, title='Bogus Search Input Error')
+
+ 
+@bogus_page.route("/<animal>/")
+def by_animal(animal):
+    return bogus_search(animal=animal, **request.args)
 
 
-@bogus_page.route("/<bogus>", methods=["GET"])
-def show(bogus):
-    C = make_tableaux_bogus(bogus)
-    bc = get_bread([(bogus, url_for('.show', bogus=bogus))])
-    return render_template("bogus.html", bogus=C, bogus_string=bogus, bread=bc)
+
+# @bogus_page.route("/<bogus>", methods=["GET"])
+# def show(bogus):
+#     C = make_tableaux_bogus(bogus)
+#     bc = get_bread([(bogus, url_for('.show', bogus=bogus))])
+#     return render_template("bogus.html", bogus=C, bogus_string=bogus, bread=bc)
 
 
 @bogus_page.route("/search")
