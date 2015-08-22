@@ -1,8 +1,23 @@
 colon separated lines of the form
 
-animal:rank
+name:common:rank:value
 
 where 
 
-animal - a string
-rank   - an integer
+name   - offical Latin name of a mammal (of the form Genus species). a
+       	 string.  this includes a single space, the first word is
+       	 capitalized and the second not, e.g. "Homo sapiens"
+	
+common - the colloquial, common name for this mammal.  a string.
+       	 everything is given in lowercase and any spaces have been
+       	 replaced by underscores.  e.g. "common_squirrel_monkey"
+
+rank   - the rank of the mammal. an integer.
+
+value  - the central special value of the mammal.  an integer.
+
+sample line in the json file:
+
+{"name":"Simia oedipus","common":"cottontop_tamarin","rank":"42","value":"7"}
+
+

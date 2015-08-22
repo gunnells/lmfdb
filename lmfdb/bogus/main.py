@@ -9,7 +9,7 @@ from lmfdb.utils import to_dict
 from pymongo import ASCENDING, DESCENDING
 import os
 import StringIO
-
+import re
 
 def get_bread(breads=[]):
     bc = [("Bogus", url_for(".index"))]
@@ -32,13 +32,18 @@ def bogus_search(**args):
              ('Search Results', '.')]
     query = {}
 
-    if info.get('animal'):
-        query = {'animal':info['animal']}
+    if info.get('common'):
+        pattern = info['common']
+        regx = re.compile(pattern, re.IGNORECASE)
+        query = {'common': regx }
         cursor = db_bogus().find(query)
         nres = cursor.count()
         info['nres'] = nres
         for result in cursor:
+            info['common'] = result['common']
             info['rank'] = result['rank']
+            info['value'] = result['value']
+            info['name'] = result['name']
             
     t = 'Bogus search results'
     credit = 'nobody@nowhere.com'
@@ -53,9 +58,9 @@ def search_input_error(info, bread, credit):
     return render_template("bogus.html", info=info, credit=credit, bread=bread, title='Bogus Search Input Error')
 
  
-@bogus_page.route("/<animal>/")
-def by_animal(animal):
-    return bogus_search(animal=animal, **request.args)
+@bogus_page.route("/<common>/")
+def by_common(common):
+    return bogus_search(common=common, **request.args)
 
 
 
