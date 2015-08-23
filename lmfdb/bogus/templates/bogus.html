@@ -1,7 +1,6 @@
 {% extends "homepage.html" %}
-{% block content %}
 
-{{ info.query }}
+{% block content %}
 
 {% if info.err is defined %}
 
@@ -14,12 +13,49 @@
 
 {% else %}
 
+<style type="text/css">
+table th.center {
+  text-align: center;
+}
+table th.left {
+  text-align: left;
+}
+table th.right {
+  text-align: right;
+}
+table td.center {
+  text-align: center;
+}
+table td.left {
+  text-align: left;
+}
+table td.right {
+  text-align: right;
+}
+table td.params {
+  text-align: left;
+  font-family: monospace;
+}
+</style>
 
-<h2>Classical Bogus</h2>
-<p>This is the classical highest weight bogus of type {{info.common}}.
-  Its official name is {{info.name}}.  Its rank is {{info.rank}} and
-  its value is {{info.value}}.  (Note: there were {{info.nres}}
-  results returned from this search.)</p>
+<h2>Classical Bogus Results ({{info.report}})</h2>
+
+<table>
+<tr>
+  <th class="left">Full name</th>
+  <th class="left">Common name</th>
+  <th class="right">Rank</th>
+  <th class="right">Value</th>
+</tr>
+{% for bog in info.results: %}
+<tr>
+<td class="left">{{bog.name}}</td>
+<td class="left">{{bog.common.replace("_"," ")}}</td>
+<td class="params">{{bog.rank}}</td>
+<td class="params">{{bog.value}}</td>
+</tr>
+{% endfor %}
+</table>
 
 {% endif %}
 

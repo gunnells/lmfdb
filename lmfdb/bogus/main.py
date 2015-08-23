@@ -36,22 +36,25 @@ def bogus_search(**args):
         pattern = info['common']
         regx = re.compile(pattern, re.IGNORECASE)
         query = {'common': regx }
-        cursor = db_bogus().find(query)
+        cursor = db_bogus().find(query).sort('name',ASCENDING)
+        res = cursor
         nres = cursor.count()
         info['nres'] = nres
-        for result in cursor:
-            info['common'] = result['common']
-            info['rank'] = result['rank']
-            info['value'] = result['value']
-            info['name'] = result['name']
+        info['results'] = cursor
+        if nres == 1:
+            info['report'] = 'unique match'
+        elif nres == 2:
+            info['report'] = 'displaying both matches'
+        else:
+            info['report'] = 'displaying all %s matches' % nres
             
-    t = 'Bogus search results'
+    title = 'Bogus search results'
     credit = 'nobody@nowhere.com'
     if nres == 0:
         info['err'] = 'There was a search error.  No results were found.  Hopefully this helpful message helps.'
         return search_input_error(info, bread, credit)
     
-    return render_template("bogus.html", info=info, credit=credit, bread=bread, title=t)
+    return render_template("bogus.html", info=info, credit=credit, bread=bread, title=title)
 
 
 def search_input_error(info, bread, credit):
