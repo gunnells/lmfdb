@@ -2,6 +2,7 @@
 import re
 import tempfile
 import os
+import yaml
 from pymongo import ASCENDING, DESCENDING
 from flask import url_for, make_response
 import lmfdb.base
@@ -320,6 +321,8 @@ class WebEC(object):
         cond, iso, num = split_lmfdb_label(self.lmfdb_label)
         data['newform'] =  web_latex(self.E.q_eigenform(10))
 
+        self.make_code_snippets()
+
         self.friends = [
             ('Isogeny class ' + self.lmfdb_iso, url_for(".by_double_iso_label", conductor=N, iso_label=iso)),
             ('Minimal quadratic twist %s %s' % (data['minq_info'], data['minq_label']), url_for(".by_triple_label", conductor=minq_N, iso_label=minq_iso, number=minq_number)),
@@ -351,3 +354,22 @@ class WebEC(object):
                            ('%s' % N, url_for(".by_conductor", conductor=N)),
                            ('%s' % iso, url_for(".by_double_iso_label", conductor=N, iso_label=iso)),
                            ('%s' % num,' ')]
+
+    def make_code_snippets(self):
+        # read in code.yaml from current directory:
+
+        _curdir = os.path.dirname(os.path.abspath(__file__))
+        self.code =  yaml.load(open(os.path.join(_curdir, "code.yaml")))
+
+        # Fill in placeholders for this specific curve:
+
+        for lang in ['sage', 'pari', 'magma']:
+            self.code['curve'][lang] = self.code['curve'][lang] % (self.data['ainvs'],self.label)
+
+        for k in self.code:
+            if k != 'prompt':
+                for lang in self.code[k]:
+                    self.code[k][lang] = self.code[k][lang].split("\n")
+                    # remove final empty line
+                    if len(self.code[k][lang][-1])==0:
+                        self.code[k][lang] = self.code[k][lang][:-1]
