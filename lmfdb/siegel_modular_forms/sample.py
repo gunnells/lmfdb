@@ -4,212 +4,138 @@
 #
 # Author: Nils Skoruppa <nils.skoruppa@gmail.com>
 
-import pymongo
-from sage.rings.integer import Integer
-from sage.misc.sage_eval import sage_eval
-import sage.structure.sage_object
-from sage.rings.polynomial.polynomial_ring_constructor import PolynomialRing
-from sage.rings.integer_ring import IntegerRing
+from sage.structure.sage_object import SageObject
+from sage.all import ZZ, QQ, NumberField, PolynomialRing
+from ast import literal_eval
+from lmfdb import db
 
-DB = None
-# DB_URL = 'mongodb://localhost:40000/'
-    
-class DataBase():
-    """
-    DB_URL = 'mongodb://localhost:40000/'
-    """
-    def __init__( self, DB_URL = None):
-        if DB_URL:
-            self.__client = pymongo.MongoClient( DB_URL)
-        else:
-            import lmfdb.base
-            self.__client = lmfdb.base.getDBConnection()
-        self.__db = self.__client.siegel_modular_forms_experimental
-        # self.__db = self.__client.siegel_modular_forms
-        
-    def find_one( self, *dct, **kwargs):
-        collection = kwargs.get( 'collection', 'samples')
-        col = self.__db[collection]
-        return col.find_one( *dct)
+def random_sample_name():
+    data = db.smf_samples.random(projection=['collection', 'name'])
+    return (data['collection'][0], data['name'])
 
-    def find( self, *dct, **kwargs):
-        collection = kwargs.get( 'collection', 'samples')
-        col = self.__db[collection]
-        return col.find( *dct)
-
-    def __del__( self):
-        self.__client.close()
-
-
-
-class Sample_class (sage.structure.sage_object.SageObject):
+class Sample_class (SageObject):
     """
     A wrapper around a database entry providing various
     properties as a sage object.
     """
-    def __init__( self, doc):
+    def __init__(self, doc):
 
-        self.__collection = doc.get( 'collection')
-        self.__name = doc.get( 'name')
-
-        weight = doc.get( 'weight')
-        self.__weight = sage_eval( weight) if weight else weight
-       
-        field = doc.get( 'field')
-        R = PolynomialRing( IntegerRing(), name = 'x')
-        self.__field = sage_eval( field, locals = R.gens_dict()) if field else field
-
-        self.__explicit_formula = doc.get( 'explicit_formula')
-        self.__type = doc.get( 'type')
-        self.__is_eigenform = doc.get( 'is_eigenform')
-        self.__is_integral = doc.get( 'is_integral')
-        self.__representation = doc.get( 'representation')
-        self.__id = doc.get( '_id')
-
-        # eigenvalues
-        # evs = doc.get( 'eigenvalues')
-        # loc_f = self.__field.gens_dict()
-        # self.__evs = dict( (eval(l), sage_eval( evs[l], locals = loc_f)) for l in evs)\
-        #     if evs else evs
-
-        # Fourier coefficients
-        # fcs = doc.get( 'Fourier_coefficients')
-        # P = PolynomialRing( self.__field, names = 'x,y')
-        # loc = P.gens_dict()
-        # loc.update ( loc_f)
-        # self.__fcs = dict( (tuple( eval(f)),
-        #                     sage_eval( fcs[f], locals = loc))
-        #                    for f in fcs) if fcs else fcs
-
+        self.__collection = doc.get('collection')
+        self.__name = doc.get('name')
+        self.__weight = doc.get('weight')
+        self.__degree_of_field = doc.get('fdeg')
+        self.__field_poly = PolynomialRing(QQ,'x')(str(doc.get('field_poly')))
+        self.__field = None # created on demand
+        self.__explicit_formula = None # create on demand
+        self.__explicit_formula_set = False # set to true once we try to get it to avoid repeatedly trying to fetch an explicit formula that is not thre
+        self.__type = doc.get('type')
+        self.__is_eigenform = doc.get('is_eigenform')
+        self.__is_integral = doc.get('is_integral')
+        self.__representation = doc.get('representation')
+        self.__id = doc.get('id_link')
  
-    def collection( self):
+    def collection(self):
         return self.__collection
 
-    def name( self):
+    def name(self):
         return self.__name
 
-    def weight( self):
+    def full_name(self):
+        return self.__collection[0] + "." + self.__name
+
+    def weight(self):
         return self.__weight
 
-    def field( self):
+    def degree_of_field(self):
+        return self.__degree_of_field
+
+    def field_poly(self):
+        return self.__field_poly
+
+    def field(self):
+        if not self.__field:
+            f = PolynomialRing(ZZ,name='x')(str(self.__field_poly))
+            self.__field = QQ if f.degree() == 1 else NumberField(f,'a')
         return self.__field
 
-    def explicit_formula( self):
+    def explicit_formula(self):
+        if not self.__explicit_formula_set:
+            self.__explicit_formula = db.smf_samples.lucky({'id_link':self.__id}, 'explicit_formula')
+            self.__explicit_formula_set = True
         return self.__explicit_formula
 
-    def type( self):
+    def type(self):
         return self.__type
 
-    def is_eigenform( self):
+    def is_eigenform(self):
         return self.__is_eigenform
 
-    def is_integral( self):
+    def is_integral(self):
         return self.__is_integral
 
-    def representation( self):
+    def representation(self):
         return self.__representation
-        
-    def available_eigenvalues( self):
-        evs = DB.find( { 'owner_id': self.__id,
-                             'data_type': 'ev',
-                         },
-                       { 'data': 0})
-        ls  = [ Integer( ev['index']) for ev in evs]
-        ls.sort()
-        return  ls
+
+    def available_eigenvalues(self, index_list=None):
+        query = {'owner_id': self.__id}
+        if index_list:
+            query['index'] = {'$in': index_list}
+        return list(db.smf_ev.search(query, 'index'))
+
+    def eigenvalues(self, index_list):
+        query = {'owner_id': self.__id, 'index': {'$in': index_list}}
+        evs = db.smf_ev.search(query, ['index', 'data'])
+        return dict((ev['index'], self.__field(str(ev['data']))) for ev in evs)
+
+    def available_Fourier_coefficients(self, det_list=None):
+        query = {'owner_id': self.__id}
+        if det_list:
+            query['det'] = {'$in' : det_list}
+        return list(db.smf_fc.search(query, 'det'))
+
+    def Fourier_coefficients(self, det_list):
+        query = {'owner_id': self.__id, 'det': {'$in': det_list}}
+        fcs = db.smf_fc.search(query, ['det', 'data'])
+        P = PolynomialRing(self.__field, names = 'x,y')
+        return dict((fcd['det'], dict((tuple(literal_eval(f)), P(str(poly))) for f, poly in fcd['data'].items() )) for fcd in fcs)
 
 
-    def eigenvalues( self, index_list):
-        evs = DB.find( { 'owner_id': self.__id,
-                         'data_type': 'ev',
-                         'index': { '$in': [ str(l) for l in index_list]}
-                         })
-        loc_f = self.__field.gens_dict() 
-        return dict( (eval(ev['index']),sage_eval( ev['data'], locals = loc_f)) for  ev in evs)
-
-
-    def available_Fourier_coefficients( self):
-        fcs = DB.find( { 'owner_id': self.__id,
-                         'data_type': 'fc',
-                         },
-                       { 'data': 0})
-        ls  = [ Integer( fcd['det']) for fcd in fcs]
-        ls.sort()
-        return  ls
-
-
-    def Fourier_coefficients( self, det_list):
-        fcs = DB.find( { 'owner_id': self.__id,
-                         'data_type': 'fc',
-                         'det': { '$in': [ str(d) for d in det_list]}
-                         })
-        P = PolynomialRing( self.__field, names = 'x,y')
-        loc = P.gens_dict()
-        loc.update ( self.__field.gens_dict())
-        return dict( (Integer(fcd['det']),
-                      dict( (tuple( eval(f)), sage_eval( fcd['data'][f], locals = loc))
-                            for f in fcd['data'] ))
-                     for fcd in fcs)
-
-
-
-
-def Sample( collection, name):
+def Sample(collection, name):
     """
-    Return a light instance of Sample_class, where 'light' means
-    'without eigenvalues and Fourier coefficients'.
+    Return a light instance of Sample_class, where 'light' means 'without eigenvalues, Fourier coefficients or explicit formula'.
     """
-    global DB
-    if not DB:
-        DB = DataBase() 
-    
-    dct = { 'collection': collection, 'name': name}
-    doc = DB.find_one( dct, { 'Fourier_coefficients': 0, 'eigenvalues': 0})
-    return Sample_class( doc) if doc else None
+    query = {'collection': {'$contains': [collection]}, 'name': name}
+    doc = db.smf_samples.lucky(query, {'Fourier_coefficients': False, 'eigenvalues': False, 'explicit_formula': False})
+    return Sample_class(doc) if doc else None
 
 
-
-def Samples( dct):
+def Samples(query):
     """
-    Return a result of a database query as list of light instances
-    of Sample_class.
+    Return a result of a database query as list of light instances of Sample_class.
     """
-    global DB
-    if not DB:
-        DB = DataBase() 
-    
-    dct.update( { 'field': { '$exists': True}})
-    docs = DB.find( dct, { 'Fourier_coefficients': 0, 'eigenvalues': 0})
-    return [ Sample_class( doc) for doc in docs]
+    docs = db.smf_samples.search(query, {'Fourier_coefficients': False, 'eigenvalues': False, 'explicit_formula': False })
+    return [ Sample_class(doc) for doc in docs]
 
 
-def export( collection, name):
+def export(collection, name):
     """
     Return
     """
-    global DB
-    if not DB:
-        DB = DataBase( DB_URL = DB_URL) 
-    
-    dct = { 'collection': collection, 'name': name}
-    doc = DB.find_one( dct, { 'Fourier_coefficients': 0, 'eigenvalues': 0})
-    id = doc.get('_id')
-    assert id != None, 'Error: the item "%s" was not accessible in the database.' % dct 
+    query = {'collection': {'$contains': [collection]}, 'name': name}
+    doc = db.smf_samples.lucky(query, {'Fourier_coefficients': False, 'eigenvalues': False})
+    if doc is None:
+        raise ValueError('Error: the item "%s.%s" was not found in the database.' % (collection, name))
+    id_link = doc.pop('id_link')
 
     # Fourier coefficients and eigenvalues
-    fcs = DB.find( { 'owner_id': id, 'data_type': 'fc' })
-    doc['Fourier_coefficients'] = dict(( ( fc['det'], fc['data']) for fc in fcs))
+    fcs = db.smf_fc.search({'owner_id': id_link}, ['det', 'data'])
+    doc['Fourier_coefficients'] = dict(((fc['det'], fc['data']) for fc in fcs))
 
-    evs = DB.find( { 'owner_id': id, 'data_type': 'ev'})
-    print evs
-    doc['eigenvalues'] = dict( ( (ev['index'], ev['data']) for ev in evs))
+    evs = db.smf_ev.search({'owner_id': id_link}, ['index', 'data'])
+    doc['eigenvalues'] = dict(((ev['index'], ev['data']) for ev in evs))
 
-    doc.pop( '_id')
     label = doc['collection'][0] + '.' + doc['name']
     doc['label']= label
-    
-    import json
-    from bson import BSON
-    from bson import json_util
-    return json.dumps( doc, sort_keys=True, indent=4, default = json_util.default)        
 
+    import json
+    return json.dumps(doc, sort_keys=True, indent=4)

@@ -1,9 +1,11 @@
+# -*- coding: utf-8 -*-
 r"""
 
 AUTHORS:
 
  Markus Fraczek <marekf@gmx.net> (2010)
  Fredrik Stroemberg (2011-)
+ Stefan Lemurell (2014-)
 
 
 
@@ -18,26 +20,22 @@ AUTHORS:
 
 
 """
-import lmfdb.base
-from lmfdb.base import app
-from flask import render_template, url_for, request, redirect, make_response, send_file
-import bson
+
+import flask
+from flask import render_template, url_for, request, send_file
+import re
+from lmfdb.utils import flash_error
+from sage.all import gcd
+
 import StringIO
-import pymongo
-from sage.all import is_odd, is_even, dumps
-# mwf = flask.Blueprint('mwf', __name__, template_folder="templates",static_folder="static")
 from lmfdb.modular_forms.maass_forms.maass_waveforms import MWF, mwf_logger, mwf
-from lmfdb.modular_forms.maass_forms.maass_waveforms.backend.mwf_utils import *
-from lmfdb.modular_forms.maass_forms.maass_waveforms.backend.mwf_classes import MaassFormTable, WebMaassForm
-from lmfdb.modular_forms.maass_forms.maass_waveforms.backend.maass_forms_db import MaassDB
-from mwf_upload_data import *
+from lmfdb.modular_forms.maass_forms.maass_waveforms.backend.maass_forms_db import maass_db
+from lmfdb.modular_forms.maass_forms.maass_waveforms.backend.mwf_utils import get_args_mwf, get_search_parameters
+from lmfdb.modular_forms.maass_forms.maass_waveforms.backend.mwf_classes import WebMaassForm
 from mwf_plot import paintSvgMaass
 logger = mwf_logger
 import json
-try:
-    from dirichlet_conrey import *
-except:
-    mwf_logger.critical("Could not import dirichlet_conrey!")
+from lmfdb.utils import rgbtohex, signtocolour
 
 
 # this is a blueprint specific default for the tempate system.
@@ -46,8 +44,21 @@ except:
 def body_class():
     return {'body_class': MWF}
 
-met = ['GET', 'POST']
+def learnmore_list():
+    return [('Completeness of the data', url_for(".cande")),
+            ('Source of the data', url_for(".source")),
+            ('Reliability of the data', url_for(".reliability"))]
 
+# Return the learnmore list with the matchstring entry removed
+def learnmore_list_remove(matchstring):
+    return filter(lambda t:t[0].find(matchstring) <0, learnmore_list())
+
+met = ['GET', 'POST']
+maxNumberOfResultsToShow = 500
+INT_RE = re.compile(r'^(\d*)$')
+POSINT_RE = re.compile(r'^(\d+)$')
+POSINT_RANGE_RE = re.compile(r'^(\d+\.\.\d+)$')
+FLOAT_RE = re.compile(r'^(\d+|\d+\.\d)$')
 
 @mwf.route("/", methods=met)
 @mwf.route("/<int:level>/", methods=met)
@@ -57,12 +68,8 @@ met = ['GET', 'POST']
 @mwf.route("/<int:level>/<int:weight>/<int:character>/<float:r1>/<float:r2>/", methods=met)
 def render_maass_waveforms(level=0, weight=-1, character=-1, r1=0, r2=0, **kwds):
     info = get_args_mwf(level=level, weight=weight, character=character, r1=r1, r2=r2, **kwds)
-
     info["credit"] = ""
-    info["learnmore"] = []
-    # Not using wiki links for now
-    # info["learnmore"].append(["Wiki","http://wiki.lmfdb.org/ModularForms/MaassForms"])
-    # if we submit a search we search the database:
+    info["learnmore"] = learnmore_list()
     mwf_logger.debug("args=%s" % request.args)
     mwf_logger.debug("method=%s" % request.method)
     mwf_logger.debug("req.form=%s" % request.form)
@@ -71,29 +78,61 @@ def render_maass_waveforms(level=0, weight=-1, character=-1, r1=0, r2=0, **kwds)
     if info.get('maass_id', None) and info.get('db', None):
         return render_one_maass_waveform_wp(**info)
     if info['search'] or (info['browse'] and int(info['weight']) != 0):
+        # This isn't the right place to do input validation, but it is easier to flash errors here (this is a hack to address issue #1820)
+        if info.get('level_range'):
+            if not re.match(POSINT_RE, info['level_range']):
+                if "-" in info['level_range']:
+                    info['level_range'] = "..".join(info['level_range'].split("-"))
+                if not re.match(POSINT_RANGE_RE, info['level_range']):
+                    flash_error("%s is not a level, please specify a positive integer <span style='color:black'>n</span> or postivie integer range <span style='color:black'>m..n</span>.", info['level_range'])
+                    return render_template('mwf_navigate.html', **info)
+        if info['character'] != -1:
+            try:
+                N = int(info.get('level_range','0'))
+            except:
+                flash_error("Character %s cannot be specified in combination with a range of levels.", info['character'])
+                return render_template('mwf_navigate.html', **info)
+            if not re.match(r'^[1-9][0-9]*\.[1-9][0-9]*$', info['character']):
+                flash_error("%s is not a valid label for a Dirichlet character.  It should be of the form <span style='color:black'>q.n</span>, where q and n are coprime positive integers with n < q, or q=n=1.", info['character'])
+                return render_template('mwf_navigate.html', **info)
+            s = info['character'].split('.')
+            q,n = int(s[0]), int(s[1])
+            if n > q or gcd(q,n) != 1 or (N > 0 and q != N):
+                flash_error("%s is not a valid label for a Dirichlet character.  It should be of the form <span style='color:black'>q.n</span>, where q and n are coprime positive integers with n < q, or q=n=1.", info['character'])
+                return render_template('mwf_navigate.html', **info)
+            info['level_range'] = str(q)
+            info['character'] = str(n)
+        if info['weight'] != -1:
+            if not re.match(INT_RE, info['weight']):
+                flash_error("%s is not a valid weight.  It should be a nonnegative integer.", info['weight'])
+                return render_template('mwf_navigate.html', **info)
+        if info.get('ev_range'):
+            if not re.match(FLOAT_RE,info['ev_range']):
+                if "-" in info['ev_range']:
+                    info['ev_range'] = "..".join(info['ev_range'].split("-"))
+                s = info['ev_range'].split("..")
+                if len(s) != 2:
+                    flash_error("%s is not a valid eigenvalue range.  It should be postive real interval.", info['ev_range'])
+                    return render_template('mwf_navigate.html', **info)
+                if not re.match(FLOAT_RE,s[0]) or not re.match(FLOAT_RE,s[1]):
+                    flash_error("%s is not a valid eigenvalue range.  It should be postive real interval.", info['ev_range'])
+                    return render_template('mwf_navigate.html', **info)
         search = get_search_parameters(info)
         mwf_logger.debug("search=%s" % search)
-        # for key in search:
-        #    info[key]=search[key]
-        # return render_browse_all_eigenvalues(**info)
         return render_search_results_wp(info, search)
     if info['browse']:
         mwf_logger.debug("browse info=%s" % info)
         return render_browse_all_eigenvalues(**info)
 
-    DB = connect_db()
-    if not info['collection'] or info['collection'] == 'all':
-        md = get_collections_info()
     info['cur_character'] = character
-    # info["info1"] = MakeTitle(level,weight,character)
     if level > 0:
-        info['maass_weight'] = DB.weights(int(level))
+        info['maass_weight'] = maass_db.weights(int(level))
         info['cur_level'] = level
 
     if weight > -1:
         info['cur_weight'] = weight
         if level > 0:
-            info['maass_character'] = DB.characters(int(level), float(weight))
+            info['maass_character'] = maass_db.characters(int(level), float(weight))
     if character > - 1:
         info['cur_character'] = character
 
@@ -101,117 +140,162 @@ def render_maass_waveforms(level=0, weight=-1, character=-1, r1=0, r2=0, **kwds)
         search = get_search_parameters(info)
         mwf_logger.debug("info=%s" % info)
         mwf_logger.debug("search=%s" % search)
-        ### TODO
-        # for key in search:
-        #    info[key]=search[key]
-        # return render_browse_all_eigenvalues(**info)
         return render_search_results_wp(info, search)
-    title = 'Maass forms'
-    info['list_of_levels'] = DB.levels()
+    title = 'Maass Forms'
+    info['list_of_levels'] = maass_db.levels()
     if info['list_of_levels']:
         info['max_level'] = max(info['list_of_levels'])
     else:
         info['max_level'] = 0
     mwf_logger.debug("info3=%s" % info)
-    bread = [('Modular forms', url_for('mf.modular_form_main_page')),
-             ('Maass forms', url_for('.render_maass_waveforms'))]
+    bread = [('Modular Forms', url_for('mf.modular_form_main_page')),
+             ('Maass Forms', url_for('.render_maass_waveforms'))]
     info['bread'] = bread
     info['title'] = title
-    DB.set_table()
-    DB.table['ncols'] = 10
-    info['DB'] = DB
-    info['dbcount'] = DB.count()
-    info['limit'] = 200
+    maass_db.set_table()
+    maass_db.table['ncols'] = 10
+    info['DB'] = maass_db
+    info['dbcount'] = maass_db.count()
+    info['limit'] = maxNumberOfResultsToShow
     return render_template("mwf_navigate.html", **info)
 
+@mwf.route("/BrowseGraph/<min_level>/<max_level>/<min_R>/<max_R>/")
+def render_maass_browse_graph(min_level, max_level, min_R, max_R):
+    r"""
+    Render a page with a graph with clickable dots for all
+    with min_R <= R <= max_R and levels in the similar range.
+    """
+    info = {}
+    info['contents'] = [paintSvgMaass(min_level, max_level, min_R, max_R)]
+    info['min_level'] = min_level
+    info['max_level'] = max_level
+    info['min_R'] = min_R
+    info['max_R'] = max_R
+    info['coloreven'] = rgbtohex(signtocolour(1))
+    info['colorodd'] = rgbtohex(signtocolour(-1))
+    bread = [('Modular Forms', url_for('mf.modular_form_main_page')),
+             ('Maass Waveforms', url_for('.render_maass_waveforms'))]
+    info['bread'] = bread
+    info['learnmore'] = learnmore_list()
 
-def render_maass_waveform_space(level, weight, character, **kwds):
-    mwf_logger.debug("in_render_maass_form_space {0},{1},{2},{3}".format(level, weight, character, kwds))
-    title = "Space of Maass forms"
-    skip = int(kwds.get('skip', 0))
-    limit = int(kwds.get('limit', 10))
-    table = MWFTable(skip=skip, limit=limit)
-    table.set_table({'level': level, 'weight': weight, 'character': character})
-    info = {'table': table}
-    return render_template("mwf_browse.html", info=info, title=title)
+    return render_template("mwf_browse_graph.html", title='Browsing Graph of Maass Forms', **info)
 
 
 @mwf.route("/<maass_id>", methods=['GET', 'POST'])
 def render_one_maass_waveform(maass_id, **kwds):
+    r"""
+    Render the webpage of one Maass waveform by calling
+    render_one_maass_waveform_wp or generates a download
+    in a format that is readable by python.
+    """
     info = get_args_mwf(**kwds)
-    info['maass_id'] = bson.objectid.ObjectId(maass_id)
+    info['maass_id'] = maass_id
+    info['learnmore'] = learnmore_list()
     mwf_logger.debug("in_render_one_maass_form: info={0}".format(info))
-    if info.get('download', '') == 'coefficients1':
-        DB = connect_db()
-        fname = ""
-        f = DB.get_maassform_by_id({"_id": info['maass_id']}, filename='True')
-        dim = f.get('dim', 0)
-        res = DB.get_coefficients({"_id": info['maass_id']}, filename='True')
-        if isinstance(res, list):
-            if isinstance(res, list):
-                res = res[0][0]
-            else:
-                res = res[0]
+    if (info.get('download', '') == 'coefficients'  or
+        info.get('download', '') == 'all'):
+        maass_id = info['maass_id']
         try:
-            C, fname = res
-        except:  # ValueError:
-            C = res
-            mwf_logger.debug("res={0}".format(res))
-        filename = fname + '.txt'
-        mwf_logger.debug("filename={0}".format(filename))
-        s = dumps(C)
+            f = WebMaassForm(maass_id)
+        except KeyError:
+            flask.abort(404)
+        filename = str(f._maass_id) + '.txt'
+        if info.get('download', '') == 'coefficients':
+            res = f.coeffs
+        else:
+            res = f.download_text()
+
         strIO = StringIO.StringIO()
-        strIO.write(s)
+        strIO.write(res)
         strIO.seek(0)
         try:
             return send_file(strIO,
                              attachment_filename=filename,
-                             as_attachment=True)
+                             as_attachment=True,
+                             add_etags=False)
         except IOError:
             info['error'] = "Could not send file!"
 
     else:
-
-        # mwf_logger.debug("id1={0}".format(id))
         return render_one_maass_waveform_wp(info)
 
-
-def render_one_maass_waveform_wp(info):
+def render_one_maass_waveform_wp(info, prec=9):
     r"""
     Render the webpage of one Maass waveform.
+
+    The precision kwarg `prec` is passed to the coefficient table, and
+    indicates to round to 0 when the difference is less than 1e-`prec`.
     """
     info["check"] = []
-    DB = connect_db()
     maass_id = info['maass_id']
     mwf_logger.debug("id1={0}".format(maass_id))
-    info['MF'] = WebMaassForm(DB, maass_id)
+    try:
+        MF = WebMaassForm(maass_id)
+    except KeyError:
+        return flask.abort(404)
+    info['MF'] = MF
+    info['title'] = "Maass Form"
+    info['bread'] = [('Modular Forms', url_for('mf.modular_form_main_page')),
+                     ('Maass Waveforms', url_for('.render_maass_waveforms'))]
+    if hasattr(MF,'level'):
+        info['bread'].append(('Level {0}'.format(MF.level), url_for('.render_maass_waveforms', level=MF.level)))
+        info['title'] += " on \(\Gamma_{0}( %s )\)" % info['MF'].level
+        if hasattr(MF, 'R') and MF.R:
+            info['title'] += " with \(R=%s\)" % info['MF'].R
+
+    # make sure all the expected attributes of a WebMaassForm are actually present
+    missing = [attr for attr in ['level', 'dim', 'num_coeff', 'R', 'character'] if not hasattr(MF, attr)]
+    if missing:
+        mwf_logger.critical("Unable to render Maass form {0}; required attributes {1} missing from database record.".format(maass_id,missing))
+        info['explain'] = "Unable to render Maass form {0} because the following required attributes were missing from the database record:".format(maass_id) \
+                      + "<ul>" + "".join(["<li>"+attr+"</li>" for attr in missing]) + "</ul>"
+        return render_template("problem.html", **info)
+
     level = info['MF'].level
     dim = info['MF'].dim
-    numc = info['MF'].num_coeff
+    # numc = info['MF'].num_coeff # never used
+    # if info['MF'].has_plot(): # and level == 1: # Bara level = 1 har rätt format för tillfället //Lemurell
+    #    info['plotlink'] = url_for('mwf.plot_maassform', maass_id=maass_id)
     # Create the link to the L-function (put in '/L' at the beginning and '/' before '?'
     Llink = "/L" + url_for('mwf.render_one_maass_waveform', maass_id=maass_id)  # + '/?db=' + info['db']
     if dim == 1:
         info["friends"] = [("L-function", Llink)]
-    bread = [('Maass waveforms', url_for('.render_maass_waveforms')),
-             ('Of Level {0}'.format(level),
-             url_for('.render_maass_waveforms', level=level))]
 
-    info["downloads"] = []
-    lenc = 20
-    mwf_logger.debug("count={0}".format(DB.count()))
+    # Navigation to previous and next form
+    # next_form_id = info['MF'].next_maassform_id()
+    # if next_form_id:
+    #    next_data = ('next', r"$f_{\text next}$", url_for('mwf.render_one_maass_waveform', maass_id = next_form_id) )
+    # else:
+    #    next_data = ('','','')
+    # prev_form_id = info['MF'].prev_maassform_id()
+    # if prev_form_id:
+    #    prev_data = ('previous', r"$f_{\text prev}$", url_for('mwf.render_one_maass_waveform', maass_id = prev_form_id) )
+    # else:
+    #    prev_data = ('','','')
+    
+    # info['navi'] = ( prev_data, next_data )
+
+    info["downloads"] = [ ('All stored data of the form',
+                           url_for('mwf.render_one_maass_waveform', maass_id=maass_id,
+                                   download='all')),
+                          ('All coefficients of the form',
+                           url_for('mwf.render_one_maass_waveform', maass_id=maass_id,
+                                   download='coefficients')) ]
+    mwf_logger.debug("count={0}".format(maass_db.count()))
     ch = info['MF'].character
     s = "\( \chi_{" + str(level) + "}(" + str(ch) + ",\cdot) \)"
-    # is it possible to get the knowls into the properties?
-    knowls = knowls = {'level': 'mf.maass.mwf.level',
-                       'weight': 'mf.maass.mwf.weight',
-                       'char': 'mf.maass.mwf.character',
-                       'R': 'mf.maass.mwf.eigenvalue',
-                       'sym': 'mf.maass.mwf.symmetry',
-                       'prec': 'mf.maass.mwf.precision',
-                       'mult': 'mf.maass.mwf.dimension',
-                       'ncoeff': 'mf.maass.mwf.ncoefficients',
-                       'fricke': 'mf.maass.mwf.fricke',
-                       'atkinlehner': 'mf.maass.mwf.atkinlehner'}
+    # Q: Is it possible to get the knowls into the properties?
+    # A: Not in a nice way and this is not done elsewhere in the LMFDB; the knowls should appear on labels in the template
+    # knowls = {'level': 'mf.maass.mwf.level',
+    #                   'weight': 'mf.maass.mwf.weight',
+    #                   'char': 'mf.maass.mwf.character',
+    #                   'R': 'mf.maass.mwf.eigenvalue',
+    #                   'sym': 'mf.maass.mwf.symmetry',
+    #                   'prec': 'mf.maass.mwf.precision',
+    #                   'mult': 'mf.maass.mwf.dimension',
+    #                   'ncoeff': 'mf.maass.mwf.ncoefficients',
+    #                   'fricke': 'cmf.fricke',
+    #                   'atkinlehner': 'cmf.atkin-lehner'}
     properties = [('Level', [info['MF'].level]),
                   ('Symmetry', [info['MF'].even_odd()]),
                   ('Weight', [info['MF'].the_weight()]),
@@ -223,11 +307,13 @@ def render_one_maass_waveform_wp(info):
                   ]
     if dim > 1 and info['MF'].the_character() == "trivial":
         properties.append(("Possibly oldform", []))
-    info['title'] = "Maass forms on \(\Gamma_{0}( %s )\)" % (info['MF'].level)
-    info['bread'] = bread
     info['properties2'] = properties
 
-    info['MF'].set_table()
+    # The precision in set_table indicates which coefficients to set to zero.
+    # For instance, if the imaginary part is less than the precision in
+    # absolute value, then it is set to 0 in set_table.
+    # The value 1e-9 is chosen arbitrarily, as recommended in issue #2076.
+    info['MF'].set_table(prec=prec)
     cols = [{"aaSorting": "asc", "sWidth": "10%", "bSortable": "true", "bSearchable": "false",
              "sType": "numeric"}]
     negc = info['MF'].table.get('negc', 0)
@@ -246,342 +332,53 @@ def render_one_maass_waveform_wp(info):
     info['credit'] = info['MF'].contributor_name
     info['coeff_aoColumns'] = cols  # json.dumps(cols)
     mwf_logger.debug("col={0}".format(cols))
-    # coeffurl=url_for('mwf.render_one_maass_waveform',maass_id=maass_id,download='coefficients')
-    #    info['downloads'] = [('Coefficients', coeffurl) ]
     return render_template("mwf_one_form.html", **info)
 
 
-def render_one_maass_waveform_wp_old(info):
-    r"""
-    Render the webpage of one Maass waveform.
-    """
-    info["check"] = []
-    # info["check"].append(["Hecke relation",url_for('not_yet_implemented')])
-    # info["check"].append(["Ramanujan-Petersson conjecture",url_for('not_yet_implemented')])
-    maass_id = info['maass_id']
-    # dbname=info['db']
-    info["friends"] = []
-    info["friends"].append(["L-function", "L/" + url_for('.render_one_maass_waveform', maass_id=maass_id)])
-    info["downloads"] = []
-    # info["downloads"].append(["Maass form data",url_for('not_yet_implemented')])
-    bread = [('Maass forms', url_for('.render_maass_waveforms'))]
-    properties = []
-    data = get_maassform_by_id(maass_id)
-    lenc = 20
-    if 'error' not in data:
-        [title, maass_info] = set_info_for_maass_form(data)
-        info["maass_data"] = maass_info
-        # rint "data=",info["maass_data"]
-        numc = data['num_coeffs']
-        mwf_logger.debug("numc={0}".format(numc))
-        if(numc > 0):
-            # if numc > 10:
-                # largs = [{'maass_id':maass_id,'number':k} for k in range(10,numc,50)]
-                # mwf_logger.debug("largs={0}".format(largs))
-            info['coefficients'] = make_table_of_coefficients(maass_id, len, offest)  # ,largs,text='more')
-            # else:
-            #    info['coefficients']=make_table_of_coefficients(maass_id)
-        else:
-            info["maass_data"].append(['Coefficients', ''])
-
-            s = 'No coefficients in the database for this form!'
-            info['coefficients'] = s
-        # info['list_spaces']=ajax_once(make_table_of_spaces_fixed_level,*largs,text='more',maass_id=maass_id)
-        # info["coefficients"]=table_of_coefficients(
-        info["credit"] = GetNameOfPerson(data['dbname'])
-        level = data['Level']
-        R = data['Eigenvalue']
-        title = "Maass forms on \(\Gamma_{0}(%s)\) with R=%s" % (level, R)
-        ## We see if there is a plot file associated to this waveform
-        if 'plot' in data:
-            mwf_logger.error("file={0}".format(data['plot']))
-    else:
-        # print "data=",data
-        title = "Could not find this Maass form in the database!"
-        info['error'] = data['error']
-
-    bread = [('Maass forms', url_for('.render_maass_waveforms'))]
-    return render_template("mwf_one_maass_form.html", info=info, title=title, bread=bread, properties=properties)
-
-
 def render_search_results_wp(info, search):
-    # res contains a lst of Maass waveforms
+    r"""
+    Render the webpage with results of a search for Maass waveform.
+    """
     mwf_logger.debug("in render_search_results. info1={0}".format(info))
     mwf_logger.debug("Search:{0}".format(search))
-    evs = {'table': {}}
     if not isinstance(search, dict):
         search = {}
-    if 'limit' not in search:
-        search['limit'] = 200
-    else:
-        search['limit'] = min(200, search['limit'])
-    if 'skip' not in search:
-        search['skip'] = 0
-    bread = [('Modular forms', url_for('mf.modular_form_main_page')),
-             ('Maass forms', url_for('.render_maass_waveforms'))]
+    limit = search.pop('limit', maxNumberOfResultsToShow)
+    if limit > maxNumberOfResultsToShow:
+        limit = maxNumberOfResultsToShow
+    offset = search.pop('skip', 0)
+    bread = [('Modular Forms', url_for('mf.modular_form_main_page')),
+             ('Maass Forms', url_for('.render_maass_waveforms'))]
     info['bread'] = bread
-    info['evs'] = evs_table2(search)
+    info['evs'] = evs_table2(search, limit=limit, offset=offset)
     mwf_logger.debug("in render_search_results. info2={0}".format(info))
-    # print "wt=",info.get('weight')
     if int(info.get('weight', 0)) == 1:
-        # print "weight1=",info.get('weight',0)
         info['wtis1'] = "selected"
         info['wtis0'] = ""
     else:
-        # print "weight0=",info.get('weight',0)
         info['wtis0'] = "selected"
         info['wtis1'] = ""
     if info.get('browse', None) is not None:
         info['title'] = 'Browse Maassforms'
         if int(info.get('weight', -1)) in [0, 1]:
-            info['title'] += ' of weight {0}'.format(info['weight'])
+            info['title'] += ' of Weight {0}'.format(info['weight'])
             if info.get('level', 0) > 0:
-                info['title'] += ' and level {0}'.format(info['level'])
+                info['title'] += ' and Level {0}'.format(info['level'])
         elif int(info.get('Level', 0)) > 0:
-            info['title'] += ' of level {0}'.format(info['level'])
+            info['title'] += ' of Level {0}'.format(info['level'])
     else:
         info['title'] = 'Search Results'
     mwf_logger.debug("in render_search_results. info={0}".format(info))
     return render_template("mwf_display_search_result.html", **info)
 
 
-def render_browse_maass_waveforms(info, title):
+def evs_table2(search, twodarray=False, limit=50, offset=0):
     r"""
-    Render a page for browsing Maass forms.
+    Returns an object containing the results of a search for Maass forms.
     """
-    ## Paging parameters
-    level_range = 6
-    ev_range = 20
-    if info['level_skip']:
-        level_skip = info['level_skip'] * level_range
-    else:
-        level_skip = 0
-    if info['ev_skip']:
-        ev_skip = info['ev_skip'] * ev_range
-    else:
-        ev_skip = 0
-    lrange = [level_skip + 1, level_skip + level_range]
-    erange = [ev_skip + 1, ev_skip + ev_range]
-    weight = info.get('weight', 0)
-    TT = MWFTable(mwf_dbname, collection='all', skip=[0, 0], limit=[6, 10], keys=['Level',
-                  'Eigenvalue'], weight=weight)
-    TT.set_table()
-    TT.get_metadata()
-    info['table'] = TT
-    # s = print_table_of_maass_waveforms(info['collection'],lrange=lrange,erange=erange)
-    # info['table']=s
-    bread = [('Modular forms', url_for('mf.modular_form_main_page')), ('Maass forms', url_for(
-        '.render_maass_waveforms'))]
-    return render_template("mwf_browse.html", info=info, title=title, bread=bread)
-
-
-def render_maass_waveforms_for_one_group(level, **kwds):
-    DB = connect_db()
-    res = dict()
-    info = dict()
-    mwf_logger.debug("collections {0}".format(DB.collection_names()))
-    for collection_name in DB.collection_names():
-        res[collection_name] = list()
-        C = pymongo.collection.Collection(DB, collection_name)
-        mwf_logger.debug("Collection {0}".format(C))
-        L = C.find({'Level': level, 'Weight': 0.0})
-        for F in L:
-            mwf_logger.debug("F: {0}".format(F))
-            try:
-                id = F['_id']
-                R = F['Eigenvalue']
-                k = F['Weight']
-                res[collection_name].append((R, k, id))
-            except:
-                pass
-        res[collection_name].sort()
-    # now we have all maass waveforms for this group
-    s = "<table><tr>"
-    for name in res.keys():
-        if(len(res[name]) == 0):
-            continue
-        s += "<td valign='top'>"
-        s += "<table><thead>"
-        s += " <tr><td valign='top'>Collection:" + name
-        s += "     </td></tr></thead>"
-        s += "<tbody>"
-        for (R, k, id) in res[name]:
-            url = url_for('mwf.render_one_maass_waveform', maass_id=str(id), db=name)
-            s += "<tr><td><a href=\"%s\">%s</a></td></tr>" % (url, R)
-        s += "</tbody>"
-        s += "</table>"
-        s += "</td>"
-    s += "</tr></table>"
-    # print "S=",s
-    info['table_of_eigenvalues'] = s
-    title = "Maass forms for \(\Gamma_{0}(" + str(level) + ")\)"
-    bread = [('Maass forms', url_for('.render_maass_waveforms'))]
-    return render_template("mwf_one_group.html", info=info, title=title)
-
-
-@mwf.route("/Tables", methods=met)
-def render_browse_all_eigenvalues(**kwds):
-    info = get_args_mwf(**kwds)
-    bread = [('Maass forms', url_for('.render_maass_waveforms'))]
-    # info={}
-    info['bread'] = bread
-    # knowls=['mf.maass.mwf.level','mf.maass.mwf.weight',
-    #        'mf.maass.mwf.character',
-    #        'mf.maass.mwf.eigenvalue','mf.maass.mwf.symmetry',
-    #        'mf.maass.mwf.precision','mf.maass.mwf.dimension',
-    #        'mf.maass.mwf.ncoefficients','mf.maass.mwf.fricke',
-    #        'mf.maass.mwf.atkinlehner']
-    # How to incorporate KNOWLS from here?
-    info['colheads'] = ['Level', 'Weight', 'Char',
-                        'Eigenvalue', 'Symmetry',
-                        'Precision', 'Mult.',
-                        'Coeff.', 'Fricke', 'Atkin-Lehner']
-
-    if int(info.get('weight', 0)) == 1:
-        print "weight1=", info.get('weight', 0)
-        info['wtis1'] = "selected"
-        info['wtis0'] = ""
-    else:
-        print "weight0=", info.get('weight', 0)
-        info['wtis0'] = "selected"
-        info['wtis1'] = ""
-    return render_template("mwf_browse_all_eigenvalues.html", **info)
-
-
-@mwf.route("/Tables_get", methods=met)
-def get_table():
-    search = get_search_parameters({})
-    mwf_logger.debug("args=%s" % request.args)
-    mwf_logger.debug("method=%s" % request.method)
-    # mwf_logger.debug("req.form=%s"%request.form)
-    if isinstance(request.form, dict):
-        for key in request.form.keys():
-            mwf_logger.debug("{0}:{1}".format(key, request.form[key]))
-    mwf_logger.debug("search:{0}".format(search))
-    if not isinstance(search, dict):
-        search = {}
-    # if not search.has_key('limit'):
-    search['limit'] = request.form.get('iDisplayLength', 10000)
-    if 'skip' not in search:
-        search['skip'] = 0
-    search['skip'] = request.form.get('iDisplayStart', 0)
-    evs = evs_table2(search, True)
-    res = {
-        "aoColumns": evs['table']['colheads'],
-        "aaData": evs['table']['data'],
-        "iTotalRecords": evs['totalrecords'],
-        "iTotalDisplayRecords": evs['totalrecords_filtered']}
-    res = json.dumps(res)
-    mwf_logger.debug("table.nrows:{0}".format(evs['table']['nrows']))
-    mwf_logger.debug("totalrecords:{0}".format(evs['totalrecords']))
-    # print "res=",res
-    return res
-
-
-def evs_table(search, twodarray=False):
-    DB = connect_db()
-
-    # indices  = DB.get_Maass_forms(search)
-    indices = DB.find_Maass_form_id(search)
     table = []
     nrows = 0
-    for fid in indices:
-        f = WebMaassForm(DB, fid, get_coeffs=False)
-        row = {}
-        R = f.R
-        N = f.level
-        k = f.weight
-        if R is None or N is None or k is None:
-            continue
-        row['R'] = R
-        row['N'] = N
-        if k == 0 or k == 1:
-            row['k'] = int(k)
-        else:
-            row['k'] = k
-        # j = f.get('Character',0)
-        ## Now get the COnrey number.
-        ## First the character
-        if k == 0:
-             # s+=url_for('characters.render_Dirichletwebpage',modulus=level,number=ch)
-            row['ch'] = f.the_character()  # conrey_character_name(N,chi)
-        else:
-            row['ch'] = "eta"
-        st = f.symmetry
-        if st == 1:
-            st = "odd"
-        elif st == 0:
-            st = "even"
-        else:
-            st = "n/a"
-        row['symmetry'] = st
-        er = f.error
-        if er > 0:
-            er = "{0:1.0e}".format(er)
-        else:
-            er = "unknown"
-        row['err'] = er
-        dim = f.dim
-        if dim is None:
-            dim = 1  # "undefined"
-        row['dim'] = dim
-        numc = f.num_coeff
-        row['numc'] = numc
-        cev = f.cusp_evs
-        row['fricke'] = 'n/a'
-        row['cuspevs'] = 'n/a'
-        if row['k'] == 0 and isinstance(cev, list):
-            if len(cev) > 1:
-                fricke = cev[1]
-                row['fricke'] = fricke
-            row['cuspevs'] = cev
-        url = url_for('mwf.render_one_maass_waveform', maass_id=f._maassid)
-        row['url'] = url
-        nrows += 1
-        if twodarray:
-            s = '<a href="{0}">{1}</a>'.format(row['url'], row['R'])
-            rowr = [row['N'], row['k'], row['ch'], s,
-                    row['symmetry'], row['err'], row['dim'], row['numc'],
-                    row['fricke'], row['cuspevs']]
-            table.append(rowr)
-        else:
-            # row=row.values()
-            table.append(row)
-    mwf_logger.debug("nrows:".format(nrows))
-    evs = {'table': {}}
-    evs['table']['data'] = table
-    evs['table']['nrows'] = nrows
-    evs['table']['ncols'] = 10
-    evs['table']['colheads'] = []
-    knowls = ['mf.maass.mwf.level', 'mf.maass.mwf.weight', 'mf.maass.mwf.character',
-              'mf.maass.mwf.eigenvalue', 'mf.maass.mwf.symmetry',
-              'mf.maass.mwf.precision', 'mf.maass.mwf.dimension',
-              'mf.maass.mwf.ncoefficients', 'mf.maass.mwf.fricke',
-              'mf.maass.mwf.atkinlehner']
-    titles = ['Level', 'Weight', 'Char',
-              'Eigenvalue', 'Symmetry',
-              'Precision', 'Mult.',
-              'Coeff.', 'Fricke', 'Atkin-Lehner']
-    for i in range(10):
-        evs['table']['colheads'].append((knowls[i], titles[i]))
-    if 'limit' in search:
-        search.pop('limit')
-    if 'skip' in search:
-        search.pop('skip')
-    evs['totalrecords'] = DB.count(search)
-
-    return evs
-
-
-def conrey_character_name(N, chi):
-    return "\chi_{" + str(self._N) + "}(" + strIO(chi.number()) + ",\cdot)"
-
-
-def evs_table2(search, twodarray=False):
-    DB = connect_db()
-    table = []
-    nrows = 0
-    fs = DB.get_Maass_forms(search)
+    fs = maass_db.get_Maass_forms(search, limit=limit, offset=offset)
     mwf_logger.debug("numrec:{0}".format(len(fs)))
     for f in fs:  # indices:
         row = {}
@@ -598,9 +395,6 @@ def evs_table2(search, twodarray=False):
             row['k'] = k
         ##
         chi = f.get('Character', 0)
-        conrey = f.get('Conrey', 0)
-        if conrey == 0:  # we need to change to conrey's notation
-            chi = DB.getDircharConrey(N, chi)
         ## Now get the COnrey number.
         ## First the character
         if k == 0:
@@ -619,7 +413,7 @@ def evs_table2(search, twodarray=False):
         row['symmetry'] = st
         er = f.get('Error', 0)
         if er > 0:
-            er = "{0:1.0e}".format(er)
+            er = "{0:1.0e}".format(float(er))
         else:
             er = "unknown"
         row['err'] = er
@@ -645,7 +439,7 @@ def evs_table2(search, twodarray=False):
                 s = 'n/a'
             row['cuspevs'] = s
 
-        url = url_for('mwf.render_one_maass_waveform', maass_id=f.get('_id'))
+        url = url_for('mwf.render_one_maass_waveform', maass_id=f.get('maass_id'))
         row['url'] = url
         nrows += 1
         if twodarray:
@@ -666,8 +460,8 @@ def evs_table2(search, twodarray=False):
     knowls = ['mf.maass.mwf.level', 'mf.maass.mwf.weight', 'mf.maass.mwf.character',
               'mf.maass.mwf.eigenvalue', 'mf.maass.mwf.symmetry',
               'mf.maass.mwf.precision', 'mf.maass.mwf.dimension',
-              'mf.maass.mwf.ncoefficients', 'mf.maass.mwf.fricke',
-              'mf.maass.mwf.atkinlehner']
+              'mf.maass.mwf.ncoefficients', 'cmf.fricke',
+              'cmf.atkin-lehner']
     titles = ['Level', 'Weight', 'Char',
               'Eigenvalue', 'Symmetry',
               'Precision', 'Mult.',
@@ -678,17 +472,84 @@ def evs_table2(search, twodarray=False):
         search.pop('limit')
     if 'skip' in search:
         search.pop('skip')
-    evs['totalrecords'] = DB.count(search, filtered=False)
-    evs['totalrecords_filtered'] = DB.count(search, filtered=True)
+    evs['totalrecords'] = maass_db.count(search)
+    evs['totalrecords_filtered'] = len(fs)
 
     return evs
 
-@mwf.route("/BrowseGraph/<min_level>/<max_level>/<min_R>/<max_R>/")
-def render_maass_browse_graph(min_level, max_level, min_R, max_R):
-    info = {}
-    info['contents'] = [paintSvgMaass(min_level, max_level, min_R, max_R)]
-    info['min_level'] = min_level
-    info['max_level'] = max_level
-    info['min_R'] = min_R
-    info['max_R'] = max_R
-    return render_template("mwf_browse_graph.html", title='Browsing graph of Maass forms', **info)
+
+
+#---------- Nothing below this is actually used as far as I can see, but don't
+#---------- want to delete yet.
+
+
+@mwf.route("/Tables", methods=met)
+def render_browse_all_eigenvalues(**kwds):
+    info = get_args_mwf(**kwds)
+    bread = [('Modular Forms', url_for('mf.modular_form_main_page')),('Maass Forms', url_for('.render_maass_waveforms'))]
+    info['bread'] = bread
+    info['colheads'] = ['Level', 'Weight', 'Char',
+                        'Eigenvalue', 'Symmetry',
+                        'Precision', 'Mult.',
+                        'Coeff.', 'Fricke', 'Atkin-Lehner']
+
+    if int(info.get('weight', 0)) == 1:
+        print "weight1=", info.get('weight', 0)
+        info['wtis1'] = "selected"
+        info['wtis0'] = ""
+    else:
+        print "weight0=", info.get('weight', 0)
+        info['wtis0'] = "selected"
+        info['wtis1'] = ""
+    return render_template("mwf_browse_all_eigenvalues.html", **info)
+
+
+@mwf.route("/Tables_get", methods=met)
+def get_table():
+    limit = request.form.get('iDisplayLength', 10000)
+    offset = request.form.get('iDisplayStart', 0)
+    evs = evs_table2({}, twodarray=True, limit=limit, offset=offset)
+    res = {
+        "aoColumns": evs['table']['colheads'],
+        "aaData": evs['table']['data'],
+        "iTotalRecords": evs['totalrecords'],
+        "iTotalDisplayRecords": evs['totalrecords_filtered']}
+    res = json.dumps(res)
+    mwf_logger.debug("table.nrows:{0}".format(evs['table']['nrows']))
+    mwf_logger.debug("totalrecords:{0}".format(evs['totalrecords']))
+    # print "res=",res
+    return res
+
+@mwf.route("/Source")
+def source():
+    t = 'Source of Maass forms data'
+    bread = [('Modular Forms', url_for('mf.modular_form_main_page')),
+                     ('Maass Waveforms', url_for('.render_maass_waveforms')), ("Source", '')]
+    learnmore = learnmore_list_remove('Source')
+    return render_template("single.html", kid='rcs.source.maass',
+                           title=t, bread=bread,
+                           learnmore=learnmore)
+
+@mwf.route("/Reliability")
+def reliability():
+    t = 'Reliability of Maass forms data'
+    bread = [('Modular Forms', url_for('mf.modular_form_main_page')),
+                     ('Maass Waveforms', url_for('.render_maass_waveforms')), ("Reliability", '')]
+    learnmore = learnmore_list_remove('Reliability')
+    return render_template("single.html", kid='rcs.rigor.maass',
+                           title=t, bread=bread,
+                           learnmore=learnmore)
+
+@mwf.route("/Completeness")
+def cande():
+    t = 'Completeness of Maass forms data'
+    bread = [('Modular Forms', url_for('mf.modular_form_main_page')),
+                     ('Maass Waveforms', url_for('.render_maass_waveforms')), ("Completeness", '')]
+    learnmore = learnmore_list_remove('Completeness')
+    return render_template("single.html", kid='rcs.cande.maass',
+                           title=t, bread=bread,
+                           learnmore=learnmore)
+
+
+def conrey_character_name(N, chi):
+    return "\chi_{" + str(N) + "}(" + str(chi.number()) + ",\cdot)"
